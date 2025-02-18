@@ -24,7 +24,7 @@ type SitesResponse struct {
 
 // https://api.solaredge.com/services/m/so/dashboard/v2/site/4417661/powerflow/latest/?components=consumption,grid,storage
 type PowerflowLatestResponse struct {
-	BatteryConsumers []interface{} `json:"batteryConsumers"`
+	BatteryConsumers []string `json:"batteryConsumers"`
 	Consumption      struct {
 		CurrentPower float64 `json:"currentPower"`
 		IsActive     bool    `json:"isActive"`
@@ -137,4 +137,90 @@ type GetBatteriesResponse struct {
 	} `json:"storageInfo"`
 	UpdateRefreshRate int           `json:"updateRefreshRate"`
 	WarningMessages   []interface{} `json:"warningMessages"`
+}
+
+type GetBatteryModeResponse struct {
+	Status           string        `json:"status"`
+	HttpStatus       int           `json:"httpStatus"`
+	WarningMessages  []interface{} `json:"warningMessages"`
+	InfoMessages     []interface{} `json:"infoMessages"`
+	ErrorMessages    []interface{} `json:"errorMessages"`
+	BatteryMode      string        `json:"batteryMode"`
+	TouConfiguration struct {
+		OwnerConfiguration []interface{} `json:"ownerConfiguration"`
+		TouPlan            interface{}   `json:"touPlan"`
+	} `json:"touConfiguration"`
+	ManualTouConfiguration struct {
+		TouConfiguration struct {
+			OwnerConfiguration []struct {
+				Months       []string `json:"months"`
+				DaysSegments []struct {
+					Days          []string `json:"days"`
+					HoursSegments []struct {
+						From          int `json:"from"`
+						To            int `json:"to"`
+						ManualTouData struct {
+							BatteryMode string `json:"batteryMode"`
+						} `json:"manualTouData"`
+					} `json:"hoursSegments"`
+				} `json:"daysSegments"`
+			} `json:"ownerConfiguration"`
+		} `json:"touConfiguration"`
+	} `json:"manualTouConfiguration"`
+	LastUpdateDate time.Time `json:"lastUpdateDate"`
+}
+
+type BatteryMode string
+
+const BatteryModeManualToU BatteryMode = "MANUAL_TOU"
+const BatteryModeMSC BatteryMode = "MSC" // Maximize Self Consumption
+
+type TouBatteryMode string
+
+type PutBatteryModeManualTouData struct {
+	BatteryMode string `json:"batteryMode"`
+}
+
+type PutBatteryModeHoursSegment struct {
+	From          int                         `json:"from"`
+	To            int                         `json:"to"`
+	ManualTouData PutBatteryModeManualTouData `json:"manualTouData"`
+}
+
+type PutBatteryModeDaySegment struct {
+	Days          []string                     `json:"days"`
+	HoursSegments []PutBatteryModeHoursSegment `json:"hoursSegments"`
+}
+
+type PutBatteryModeOwnerConfiguration struct {
+	Months       []string                   `json:"months"`
+	DaysSegments []PutBatteryModeDaySegment `json:"daysSegments"`
+}
+
+type PutBatteryModeTouConfiguration struct {
+	TouPlan            interface{}                        `json:"touPlan,omitempty"`
+	OwnerConfiguration []PutBatteryModeOwnerConfiguration `json:"ownerConfiguration"`
+}
+
+type PutBatteryModeManualTouConfiguration struct {
+	TouConfiguration PutBatteryModeTouConfiguration `json:"touConfiguration"`
+}
+
+type PutBatteryModeRequest struct {
+	BatteryMode            BatteryMode                          `json:"batteryMode"`
+	ManualTouConfiguration PutBatteryModeManualTouConfiguration `json:"manualTouConfiguration"`
+	TouConfiguration       PutBatteryModeTouConfiguration       `json:"touConfiguration"`
+}
+
+type PutBatteryModeResponse struct {
+	Status          string        `json:"status"`
+	HttpStatus      int           `json:"httpStatus"`
+	WarningMessages []interface{} `json:"warningMessages"`
+	InfoMessages    []interface{} `json:"infoMessages"`
+	ErrorMessages   []struct {
+		Message        string        `json:"message"`
+		MessageCode    interface{}   `json:"messageCode"`
+		Params         []interface{} `json:"params"`
+		TranslationKey string        `json:"translationKey"`
+	} `json:"errorMessages"`
 }

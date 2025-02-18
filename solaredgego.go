@@ -2,10 +2,12 @@ package solaredgego
 
 import (
 	"fmt"
-	"github.com/go-resty/resty/v2"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"time"
+
+	"github.com/go-resty/resty/v2"
 )
 
 type Options struct {
@@ -15,15 +17,18 @@ type Options struct {
 }
 
 const (
-	LOGIN_URL     = "https://api.solaredge.com/solaredge-apigw/api/login"
-	SITES_URL     = "https://api.solaredge.com/services/m/so/sites/?status=ACTIVE%2CPENDING&sortName=name&sortOrder=ASC&page=0&pageSize=1&isDemoSite=false"
-	POWERFLOW_URL = "https://api.solaredge.com/services/m/so/dashboard/v2/site/%d/powerflow/latest/?components=consumption,grid,storage"
-	BATTERIES_URL = "https://ha.monitoring.solaredge.com/api/homeautomation/v1.0/storage/%d/getBatteries?triggerHF=false"
+	LOGIN_URL            = "https://api.solaredge.com/solaredge-apigw/api/login"
+	SITES_URL            = "https://api.solaredge.com/services/m/so/sites/?status=ACTIVE%2CPENDING&sortName=name&sortOrder=ASC&page=0&pageSize=1&isDemoSite=false"
+	POWERFLOW_URL        = "https://api.solaredge.com/services/m/so/dashboard/v2/site/%d/powerflow/latest/?components=consumption,grid,storage"
+	BATTERIES_URL        = "https://ha.monitoring.solaredge.com/api/homeautomation/v1.0/storage/%d/getBatteries?triggerHF=false"
+	GET_BATTERY_MODE_URL = "https://ha.monitoring.solaredge.com/api/homeautomation/v1.0/storage/%d/batteryMode"
 )
 
 type SolarEdge interface {
 	Login() (*SitesResponse, error)
 	GetData(siteId int) (*PowerflowLatestResponse, *GetBatteriesResponse, error)
+	GetBatteryMode(siteId int) (*GetBatteryModeResponse, error)
+	PutBatteryMode(siteId int, req *PutBatteryModeRequest) error
 }
 
 func NewSolarEdge(options *Options) SolarEdge {
@@ -62,6 +67,46 @@ type solarEdge struct {
 	cj      *cookiejar.Jar
 }
 
+func (n *solarEdge) PutBatteryMode(siteId int, req *PutBatteryModeRequest) error {
+	retries := 5
+	for retries > 0 {
+		url := fmt.Sprintf("https://ha.monitoring.solaredge.com/api/homeautomation/v1.0/storage/%d/batteryMode", siteId)
+		var resp PutBatteryModeResponse
+		_, err := n.client.R().SetBody(req).SetResult(&resp).Put(url)
+		if err == nil && resp.HttpStatus == 200 {
+			return nil
+		}
+
+		if err != nil {
+			fmt.Printf("PutBattery error: %s\n", err.Error())
+		} else if resp.HttpStatus != 200 {
+			fmt.Printf("PutBattery http error: %s %d (%+v)\n", resp.Status, resp.HttpStatus, resp)
+		}
+
+		time.Sleep(time.Second * 20)
+		retries--
+	}
+
+	return fmt.Errorf("PutBattery failed")
+}
+
+func (n *solarEdge) GetBatteryMode(siteId int) (*GetBatteryModeResponse, error) {
+	{
+		x, err := n.client.R().Get(fmt.Sprintf("https://ha.monitoring.solaredge.com/api/homeautomation/v1.0/sites/%d/excessPvPrioritiesV2", siteId))
+		if err != nil {
+			panic(err)
+		}
+		fmt.Println(string(x.Body()))
+	}
+
+	var resp GetBatteryModeResponse
+	_, err := n.client.R().SetResult(&resp).Get(fmt.Sprintf(GET_BATTERY_MODE_URL, siteId))
+	if err != nil {
+		return nil, fmt.Errorf("Failed to get powerflow data: %s", err.Error())
+	}
+	return &resp, nil
+}
+
 func (n *solarEdge) GetData(siteId int) (*PowerflowLatestResponse, *GetBatteriesResponse, error) {
 	var powerflowLatestResponse PowerflowLatestResponse
 	var getBatteriesResponse GetBatteriesResponse
@@ -73,7 +118,7 @@ func (n *solarEdge) GetData(siteId int) (*PowerflowLatestResponse, *GetBatteries
 
 	_, err = n.client.R().SetResult(&getBatteriesResponse).Get(fmt.Sprintf(BATTERIES_URL, siteId))
 	if err != nil {
-		return nil, nil, fmt.Errorf("Failed to get powerflow data: %s", err.Error())
+		return nil, nil, fmt.Errorf("Failed to get battery data: %s", err.Error())
 	}
 
 	return &powerflowLatestResponse, &getBatteriesResponse, nil
