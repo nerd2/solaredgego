@@ -1,10 +1,12 @@
 package solaredgego
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/go-resty/resty/v2"
@@ -71,6 +73,7 @@ func (n *solarEdge) PutBatteryMode(siteId int, req *PutBatteryModeRequest) error
 	retries := 5
 	for retries > 0 {
 		url := fmt.Sprintf("https://ha.monitoring.solaredge.com/api/homeautomation/v1.0/storage/%d/batteryMode", siteId)
+		data, _ := json.Marshal(req)
 		var resp PutBatteryModeResponse
 		_, err := n.client.R().SetBody(req).SetResult(&resp).Put(url)
 		if err == nil && resp.HttpStatus == 200 {
@@ -100,7 +103,7 @@ func (n *solarEdge) GetBatteryMode(siteId int) (*GetBatteryModeResponse, error) 
 	}
 
 	var resp GetBatteryModeResponse
-	_, err := n.client.R().SetResult(&resp).Get(fmt.Sprintf(GET_BATTERY_MODE_URL, siteId))
+	x, err := n.client.R().SetResult(&resp).Get(fmt.Sprintf(GET_BATTERY_MODE_URL, siteId))
 	if err != nil {
 		return nil, fmt.Errorf("Failed to get powerflow data: %s", err.Error())
 	}
@@ -171,4 +174,68 @@ func (n *solarEdge) Login() (*SitesResponse, error) {
 		}
 		return &sitesResponse, nil
 	}
+}
+
+func BatteryModeMsc() *PutBatteryModeRequest {
+	return createBatteryRequest(BatteryModeMSC, false, false, false)
+}
+
+func BatteryModeCharge() *PutBatteryModeRequest {
+	return createBatteryRequest(BatteryModeManualToU, true, true, false)
+}
+
+func BatteryModeDischarge() *PutBatteryModeRequest {
+	return createBatteryRequest(BatteryModeManualToU, true, false, false)
+}
+
+func BatteryModeDisable() *PutBatteryModeRequest {
+	return createBatteryRequest(BatteryModeManualToU, true, false, true) // Disable battery by saying discharge 2 hours ago
+}
+
+func createBatteryRequest(batteryMode BatteryMode, touEnabled bool, touCharging bool, touPause bool) *PutBatteryModeRequest {
+	req := &PutBatteryModeRequest{
+		BatteryMode: batteryMode,
+		ManualTouConfiguration: PutBatteryModeManualTouConfiguration{
+			TouConfiguration: PutBatteryModeTouConfiguration{
+				TouPlan:            nil,
+				OwnerConfiguration: []PutBatteryModeOwnerConfiguration{},
+			},
+		},
+		TouConfiguration: PutBatteryModeTouConfiguration{},
+	}
+
+	addOwnerConfig := func(t time.Time, touMode string) {
+		req.ManualTouConfiguration.TouConfiguration.OwnerConfiguration = append(req.ManualTouConfiguration.TouConfiguration.OwnerConfiguration, PutBatteryModeOwnerConfiguration{
+			Months: []string{strings.ToUpper(t.Month().String())},
+			DaysSegments: []PutBatteryModeDaySegment{{
+				Days: []string{strings.ToUpper(t.Weekday().String())},
+				HoursSegments: []PutBatteryModeHoursSegment{{
+					From: t.Hour() * 60,
+					To:   (t.Hour() + 1) * 60,
+					ManualTouData: PutBatteryModeManualTouData{
+						BatteryMode: touMode,
+					},
+				}},
+			}},
+		})
+	}
+
+	if touEnabled {
+		const Mode_Charging = "CHARGING"
+		const Mode_Discharging = "DISCHARGING"
+		const Mode_Paused = "PAUSE"
+		now := time.Now()
+
+		if touCharging {
+			addOwnerConfig(now, Mode_Charging)
+			addOwnerConfig(now.Add(time.Hour*2), Mode_Discharging)
+		} else if touPause {
+			addOwnerConfig(now, Mode_Paused)
+		} else {
+			addOwnerConfig(now, Mode_Discharging)
+			addOwnerConfig(now.Add(time.Hour*2), Mode_Charging)
+		}
+	}
+
+	return req
 }
